@@ -98,7 +98,7 @@ discovery.seed_hosts: ["node3:9300", "node4:9300", "node5:9300"]
 #
 # Bootstrap the cluster using an initial set of master-eligible nodes:
 #
-cluster.initial_master_nodes: ["node3"]
+cluster.initial_master_nodes: ["node3", "node4", "node5"]
 #
 # For more information, consult the discovery and cluster formation module documentation.
 #
@@ -107,6 +107,14 @@ cluster.initial_master_nodes: ["node3"]
 # Require explicit names when deleting indices:
 #
 #action.destructive_requires_name: true
+# 启用X-Pack安全认证
+xpack.security.enabled: true
+
+# 启用节点间通信SSL加密（多节点集群必须配置）
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.keystore.path: elastic-certificates.p12
+xpack.security.transport.ssl.truststore.path: elastic-certificates.p12
 ```
 
 ## 3、IK分词器
@@ -310,6 +318,13 @@ echo "========================================="
 # ================= 配置区域 =================
 NODES=("10.0.0.67" "10.0.0.68" "10.0.0.69")
 ES_PORT="9200"
+ES_USER="elastic"  # 你的ES用户名
+
+# 密码获取逻辑（优先读取环境变量，其次交互式输入）
+if [ -z "$ES_PASSWORD" ]; then
+    read -sp "请输入 Elasticsearch 密码: " ES_PASSWORD
+    echo ""
+fi
 # ===========================================
 
 echo "========================================="
@@ -318,24 +333,24 @@ echo "========================================="
 
 # 遍历节点，找到第一个能响应的节点进行查询
 for node in "${NODES[@]}"; do
-    # 检查节点是否存活
-    if curl -s --connect-timeout 2 "http://${node}:${ES_PORT}/" > /dev/null 2>&1; then
+    # 检查节点是否存活（加入 -u 认证）
+    if curl -s --connect-timeout 2 -u "${ES_USER}:${ES_PASSWORD}" "http://${node}:${ES_PORT}/" > /dev/null 2>&1; then
         echo "[INFO] 成功连接到节点: $node"
         echo ""
         
         # 1. 检查集群健康度
         echo "--- 集群健康状态 ---"
-        curl -s -X GET "http://${node}:${ES_PORT}/_cat/health?v"
+        curl -s -u "${ES_USER}:${ES_PASSWORD}" -X GET "http://${node}:${ES_PORT}/_cat/health?v"
         echo ""
         
         # 2. 检查节点列表及角色
         echo "--- 节点详细信息 ---"
-        curl -s -X GET "http://${node}:${ES_PORT}/_cat/nodes?v&h=name,ip,node.role,master,heap.percent,ram.percent,cpu,load_1m,disk.used_percent"
+        curl -s -u "${ES_USER}:${ES_PASSWORD}" -X GET "http://${node}:${ES_PORT}/_cat/nodes?v&h=name,ip,node.role,master,heap.percent,ram.percent,cpu,load_1m,disk.used_percent"
         echo ""
         
         # 3. 检查分片分配状态（排查是否有 unassigned 分片）
         echo "--- 未分配分片统计 ---"
-        curl -s -X GET "http://${node}:${ES_PORT}/_cat/shards?v&h=index,shard,prirep,state,node&s=state" | grep -E "UNASSIGNED|shard"
+        curl -s -u "${ES_USER}:${ES_PASSWORD}" -X GET "http://${node}:${ES_PORT}/_cat/shards?v&h=index,shard,prirep,state,node&s=state" | grep -E "UNASSIGNED|shard"
         echo ""
         
         exit 0
@@ -343,8 +358,7 @@ for node in "${NODES[@]}"; do
 done
 
 # 如果所有节点都无法连接
-echo "[ERROR] 无法连接到集群中的任何节点！请检查网络或 ES 进程是否存活。"
-
+echo "[ERROR] 无法连接到集群中的任何节点！请检查网络、ES进程或密码是否正确。"
 ```
 
 ### 5.4 stop-es
